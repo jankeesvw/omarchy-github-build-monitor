@@ -8,6 +8,10 @@ Open the panel and you get the last builds, each with what it was, how long it t
 
 ![The panel, with a build running](screenshots/panel.png)
 
+It follows the theme, including the light ones:
+
+![The same panel on Catppuccin Latte](screenshots/light.png)
+
 ## What counts as a build
 
 A commit, not a workflow run. One push to main starts several workflows and they finish minutes apart, so following any single one of them means saying green while the deploy is still going. Every push-triggered run is grouped by its commit and rolled up: running if anything is still going, red if anything failed, and the duration is the wall clock from the first run starting to the last one ending, which is the wait an actual person sits through.
