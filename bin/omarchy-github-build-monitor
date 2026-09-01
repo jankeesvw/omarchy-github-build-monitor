@@ -23,8 +23,28 @@
 set -uo pipefail
 
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-github-build-monitor"
-DEMO_FILE="$CACHE_DIR/demo"
 DEFAULT_LIMIT=5
+
+# Everything that touches the cache goes through this, which opens the
+# directory once and works from that descriptor afterwards. Checking a path
+# and then using the path are two operations on two possibly different
+# objects, and this script used to do exactly that.
+STORE="$(dirname -- "$(readlink -f -- "$0")")/github-build-monitor-store"
+
+# Limits, all of them deliberate. Anything that arrives from the network or
+# from a setting is bounded before it reaches a buffer, a shell variable or
+# the panel, because none of those have a size of their own.
+MAX_RESPONSE_BYTES=$((4 * 1024 * 1024))   # one API response
+MAX_OUTPUT_BYTES=$((1024 * 1024))         # what this script hands the panel
+MAX_REPO_CHARS=140
+MAX_BRANCH_CHARS=255
+MAX_NEEDLE_CHARS=200
+MAX_RUNS=60                               # runs read out of one response
+MAX_JOBS=40                               # jobs read out of one run
+MAX_FILES=400                             # files looked at in one commit
+MAX_TEXT_CHARS=300                        # any single string we pass on
+MAX_PATH_CHARS=400
+MAX_FLAGGED=25                            # flagged paths kept per build
 
 die() {
   printf '{"ok":false,"error":%s}\n' "$(printf '%s' "$1" | jq -Rs .)"
@@ -34,38 +54,18 @@ die() {
 # A cache directory is private, and stays private. mkdir -p follows a symlink
 # to a directory and reports success, and it leaves the mode of an existing
 # directory alone, so neither of those is proof of anything on its own.
-private_dir() {
-  local dir="$1" owner
-  mkdir -p -m 700 -- "$dir" 2>/dev/null
-  [[ -d "$dir" && ! -L "$dir" ]] || return 1
-  owner="$(stat -c '%u' -- "$dir" 2>/dev/null)" || return 1
-  [[ "$owner" == "$(id -u)" ]] || return 1
-  chmod 700 -- "$dir" 2>/dev/null || return 1
 
-  # Unconditional, and about the contents rather than the directory: a
-  # directory that is 700 today can hold files from a version that was not,
-  # and anything in here that is neither a regular file nor a directory of
-  # ours was never put there by this script. find uses lstat, so a planted
-  # symlink is -type l whatever it points at, and goes.
-  find "$dir" -mindepth 1 -maxdepth 1 ! -type f ! -type d -exec rm -rf -- {} + 2>/dev/null
-  find "$dir" -mindepth 1 -maxdepth 1 -type f -exec chmod 600 -- {} + 2>/dev/null
-  find "$dir" -mindepth 1 -maxdepth 1 -type d -exec chmod 700 -- {} + 2>/dev/null
-  return 0
-}
-
-readable_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
 
 # rename(2) replaces the path, not what the path points at, so a symlink
 # someone left on the destination cannot redirect the write.
-write_private() {
-  local dest="$1" tmp
-  tmp="$(mktemp "$dest.XXXXXX" 2>/dev/null)" || return 1
-  chmod 600 -- "$tmp" 2>/dev/null
-  cat > "$tmp" || { rm -f -- "$tmp"; return 1; }
-  mv -f -- "$tmp" "$dest" || { rm -f -- "$tmp"; return 1; }
-}
 
-valid_repo() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; }
+# Shape and size. A pattern with a `*` in it happily matches a megabyte, and
+# every one of these strings ends up in an argument list, a URL or a file
+# name further down.
+valid_repo() {
+  [ "${#1}" -le "$MAX_REPO_CHARS" ] \
+    && [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
 
 # owner/name out of whatever identifies a GitHub repository: the browser URL,
 # the clone URL, the ssh remote, or owner/name itself. This runs before
@@ -74,6 +74,9 @@ valid_repo() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*
 # string that valid_repo then refuses.
 normalize_repo() {
   local s="${1//[[:space:]]/}" stripped
+  # Bounded before any of the substitutions below, so none of them are handed
+  # something arbitrarily long to chew through.
+  [ "${#s}" -le $((MAX_REPO_CHARS * 4)) ] || { printf ''; return 0; }
 
   # A URL out of a browser arrives in whatever case it was typed, and
   # ${var#prefix} matches case sensitively, so the stripping is done with sed
@@ -101,10 +104,13 @@ normalize_repo() {
   # same repository.
   printf '%s' "$s" | awk -F/ 'NF>=2 && $1!="" && $2!="" {printf "%s/%s", $1, $2}'
 }
-valid_branch() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; }
+valid_branch() {
+  [ "${#1}" -le "$MAX_BRANCH_CHARS" ] && [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
+}
 valid_limit() { [[ "$1" =~ ^[0-9]{1,2}$ ]] && [ "$1" != "0" ]; }
 
-demo_on() { readable_file "$DEMO_FILE"; }
+store() { "$STORE" "$@"; }
+demo_on() { store exists demo >/dev/null 2>&1; }
 
 # ------------------------------------------------------------------- cache
 #
@@ -114,12 +120,12 @@ demo_on() { readable_file "$DEMO_FILE"; }
 #
 # The cache holds one file per project, named after it. A repository name has
 # already been through valid_repo by the time it gets here, so the only thing
-# left to deal with is the slash in the middle.
-cache_file_for() { printf '%s/%s.json' "$CACHE_DIR" "${1//\//__}"; }
+# left to deal with is the slash in the middle. The store refuses any name
+# that is not one plain component, so that rewrite happens before the call
+# rather than being trusted afterwards.
+cache_name_for() { printf '%s.json' "${1//\//__}"; }
 
-AVATAR_DIR="$CACHE_DIR/avatars"
-
-valid_login() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; }
+valid_login() { [ "${#1}" -le 39 ] && [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; }
 
 # One small picture per author, fetched once and kept. Downloaded here rather
 # than pointed at from QML: an Image with a remote source is the shell process
@@ -130,34 +136,40 @@ valid_login() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; }
 # The URL is built from a login matched against GitHub's own shape, behind a
 # literal prefix. The avatar_url the API sends is not used: it is a string
 # from the network on its way to a fetch.
+#
+# Three things bound what comes back. `--proto` and `--proto-redir` keep the
+# whole exchange on https, so a redirect cannot walk it onto http or file or
+# scp; `--max-redirs` stops a chain; `--max-filesize` and the store's own cap
+# stop the body. The bytes never touch a file until the store has agreed they
+# are an image of a sane size, so what Qt's decoder opens later has been
+# looked at first.
 fetch_avatar() {
-  local login="$1" dest tmp
+  local login="$1"
   valid_login "$login" || return 1
-  dest="$AVATAR_DIR/$login.png"
-  readable_file "$dest" && return 0
+  store exists "avatars/$login.png" >/dev/null 2>&1 && return 0
 
-  tmp="$(mktemp "$dest.XXXXXX" 2>/dev/null)" || return 1
-  if curl -fsSL --max-time 8 --max-filesize 400000 \
-          -o "$tmp" -- "https://github.com/$login.png?size=64" 2>/dev/null; then
-    chmod 600 -- "$tmp" 2>/dev/null
-    mv -f -- "$tmp" "$dest" || { rm -f -- "$tmp"; return 1; }
-    return 0
-  fi
-  rm -f -- "$tmp"
-  return 1
+  curl -fsSL \
+       --proto '=https' --proto-redir '=https' --max-redirs 2 \
+       --max-time 8 --max-filesize 400000 \
+       -- "https://github.com/$login.png?size=64" 2>/dev/null \
+    | store write-image "avatars/$login.png" 2>/dev/null
 }
 
 add_avatars() {
-  local builds="$1" logins login found="{}"
+  local builds="$1" logins login found="{}" avatar_path
 
   command -v curl >/dev/null 2>&1 || { jq -c 'map(. + {avatar: ""})' <<<"$builds" 2>/dev/null || printf '%s' "$builds"; return 0; }
-  private_dir "$AVATAR_DIR" || { jq -c 'map(. + {avatar: ""})' <<<"$builds" 2>/dev/null || printf '%s' "$builds"; return 0; }
+  store avatar-dir >/dev/null 2>&1 || { jq -c 'map(. + {avatar: ""})' <<<"$builds" 2>/dev/null || printf '%s' "$builds"; return 0; }
 
   logins="$(jq -r '.[].actor // empty | select(. != "")' <<<"$builds" 2>/dev/null | sort -u)"
   for login in $logins; do
     valid_login "$login" || continue
     fetch_avatar "$login" || continue
-    found="$(jq -c --arg l "$login" --arg p "$AVATAR_DIR/$login.png" '.[$l] = $p' <<<"$found" 2>/dev/null)" \
+    # The path comes back from the store, which hands one over only for a
+    # regular file it owns that really is an image of a sane size.
+    avatar_path="$(store path "avatars/$login.png" 2>/dev/null)" || continue
+    [ -n "$avatar_path" ] || continue
+    found="$(jq -c --arg l "$login" --arg p "$avatar_path" '.[$l] = $p' <<<"$found" 2>/dev/null)" \
       || found="$found"
   done
 
@@ -170,11 +182,6 @@ add_avatars() {
 # widget until somebody deleted the file by hand, so a cache that does not
 # read back as an object is simply started again: it is rebuildable by
 # definition.
-ensure_json_object() {
-  local file="$1"
-  readable_file "$file" && jq -e 'type == "object"' -- "$file" >/dev/null 2>&1 && return 0
-  printf '{}\n' | write_private "$file"
-}
 
 # The paths in one commit that match any of the needles, as a JSON array.
 # Plain substring matching on a lowercased path, never a regex: the needles
@@ -188,13 +195,18 @@ commit_flagged_paths() {
   local repo="$1" sha="$2" needle="$3"
   gh_get "repos/$repo/commits/$sha" || return 1
   printf '%s' "$GH_OUT" \
-    | jq -c --arg n "$needle" '
+    | jq -c --arg n "$needle" --argjson maxfiles "$MAX_FILES" \
+             --argjson maxflagged "$MAX_FLAGGED" --argjson maxpath "$MAX_PATH_CHARS" '
         ($n | ascii_downcase | split(",")
             | map(sub("^ +";"") | sub(" +$";""))
             | map(select(length > 0))) as $needles
-        | [ .files[]?.filename // empty
+        | [ .files[]?.filename // empty ]
+        | .[0:$maxfiles]
+        | [ .[]
+            | .[0:$maxpath]
             | . as $path
             | select($needles | any(. as $needle | ($path | ascii_downcase) | contains($needle))) ]
+        | .[0:$maxflagged]
       ' 2>/dev/null
 }
 
@@ -211,11 +223,15 @@ add_flagged_paths() {
     return 0
   fi
 
-  if private_dir "$CACHE_DIR"; then
-    cache_path="$(cache_file_for "$repo")"
-    ensure_json_object "$cache_path"
-    cache="$(cat -- "$cache_path" 2>/dev/null)"
+  # A cache that does not read back as an object is simply started again: it
+  # is rebuildable by definition, and one interrupted write should not break
+  # the widget until somebody deletes a file by hand.
+  cache_path="$(cache_name_for "$repo")"
+  if store init >/dev/null 2>&1; then
+    cache="$(store read "$cache_path" 2>/dev/null)" || cache="{}"
     jq -e 'type == "object"' <<<"$cache" >/dev/null 2>&1 || cache="{}"
+  else
+    cache_path=""
   fi
 
   shas="$(jq -r '.[].sha' <<<"$builds" 2>/dev/null)"
@@ -236,7 +252,7 @@ add_flagged_paths() {
   # Written back holding only the commits still on screen, so the file stays
   # the size of the window rather than growing for the life of the project.
   if [ -n "${cache_path:-}" ]; then
-    printf '%s\n' "$fresh" | write_private "$cache_path"
+    printf '%s\n' "$fresh" | store write "$cache_path" 2>/dev/null || true
   fi
 
   jq -c --argjson f "$fresh" 'map(. + {flagged: (($f[.sha].paths) // [])})' <<<"$builds" 2>/dev/null \
@@ -249,7 +265,9 @@ add_flagged_paths() {
 # question anybody has.
 run_jobs() {
   gh_get "repos/$1/actions/runs/$2/jobs?per_page=50" || return 1
-  printf '%s' "$GH_OUT" | jq -c '
+  printf '%s' "$GH_OUT" | jq -c --argjson maxjobs "$MAX_JOBS" --argjson maxtext "$MAX_TEXT_CHARS" '
+    def clip: if type == "string" then .[0:$maxtext] else . end;
+
     def jstate:
       if (.status as $s | ["queued","in_progress","waiting","requested","pending"] | index($s)) then "running"
       elif .conclusion == null then "running"
@@ -259,8 +277,10 @@ run_jobs() {
       else "failure"
       end;
 
-    [ .jobs[]?
-      | { name: (.name // ""),
+    [ .jobs[]? ]
+    | .[0:$maxjobs]
+    | [ .[]
+      | { name: ((.name // "") | clip),
           state: jstate,
           stepCount: ([ .steps[]? ] | length),
           stepsDone: ([ .steps[]? | select(.status == "completed") ] | length),
@@ -271,7 +291,7 @@ run_jobs() {
                         as $now
                         | if $now != "" then $now
                           else ([ .steps[]? | select(.status == "completed") | .name ] | (.[-1] // ""))
-                          end) }
+                          end | clip) }
     ]
     | sort_by(if .state == "running" then 0 elif .state == "failure" then 1 else 2 end)
   ' 2>/dev/null
@@ -313,10 +333,21 @@ GH_ERR=""
 gh_get() {
   local path="$1" errfile status
   errfile="$(mktemp "${TMPDIR:-/tmp}/omarchy-github-build-monitor-err.XXXXXX")" || return 1
-  GH_OUT="$(gh api -- "$path" 2>"$errfile")"
-  status=$?
-  GH_ERR="$(cat -- "$errfile")"
+
+  # Read one byte past the limit rather than however much the other side
+  # feels like sending. A response that reaches the cap is refused instead of
+  # truncated: half a JSON document is not a smaller answer, it is a
+  # different one, and this is a shell variable with no size of its own.
+  GH_OUT="$(gh api -- "$path" 2>"$errfile" | head -c $((MAX_RESPONSE_BYTES + 1)))"
+  status=${PIPESTATUS[0]}
+  GH_ERR="$(head -c 4096 -- "$errfile")"
   rm -f -- "$errfile"
+
+  if [ "${#GH_OUT}" -gt "$MAX_RESPONSE_BYTES" ]; then
+    GH_OUT=""
+    GH_ERR="response over ${MAX_RESPONSE_BYTES} bytes"
+    return 1
+  fi
   return $status
 }
 
@@ -332,6 +363,8 @@ fail_reason() {
       printf 'GitHub refused the request: rate limit or no access' ;;
     *"could not resolve host"*|*"dial tcp"*|*"no such host"*)
       printf 'no connection to GitHub' ;;
+    *"response over "*)
+      printf 'GitHub sent more than this widget will read' ;;
     *)
       printf 'could not reach GitHub' ;;
   esac
@@ -339,7 +372,14 @@ fail_reason() {
 
 # The jq program below is the whole model. It never touches the shell.
 runs_to_builds() {
-  jq -c --argjson limit "$1" '
+  jq -c --argjson limit "$1" \
+        --argjson maxruns "$MAX_RUNS" --argjson maxjobs "$MAX_JOBS" \
+        --argjson maxtext "$MAX_TEXT_CHARS" '
+    # Every string that leaves here is cut to a length the panel can hold.
+    # A commit message has no maximum, and the row it lands in elides at a
+    # couple of hundred pixels anyway, so the rest is only something to carry.
+    def clip: if type == "string" then .[0:$maxtext] else . end;
+
     def rstate:
       if (.status as $s | ["queued","in_progress","waiting","requested","pending"] | index($s)) then "running"
       elif .conclusion == null then "running"
@@ -363,16 +403,18 @@ runs_to_builds() {
     def secs: if . < 0 then 0 else (. | floor) end;
 
     (now | floor) as $now
-    | [ .workflow_runs[]?
-        | { sha: (.head_sha // ""),
+    | [ .workflow_runs[]? ]
+    | .[0:$maxruns]
+    | [ .[]
+        | { sha: ((.head_sha // "")[0:64]),
             id: (.id // 0),
-            name: (.name // .workflow_name // ""),
+            name: ((.name // .workflow_name // "") | clip),
             state: rstate,
             started: ((.run_started_at // .created_at // "1970-01-01T00:00:00Z") | fromdateiso8601),
             finished: ((.updated_at // .created_at // "1970-01-01T00:00:00Z") | fromdateiso8601),
             url: (.html_url // ""),
-            actor: (.actor.login // ""),
-            message: (.head_commit.message // "") } ]
+            actor: ((.actor.login // "")[0:39]),
+            message: ((.head_commit.message // "")[0:4096]) } ]
     | map(select(.sha != ""))
     | group_by(.sha)
     | map({
@@ -381,16 +423,16 @@ runs_to_builds() {
         # its first line and what the change actually was on the line under the
         # blank one, so both are kept: the subject, and the first real line of
         # the body when there is one worth showing.
-        message: (([ .[] | select(.message != "") | .message ] | (.[0] // "")) | split("\n")[0]),
+        message: (([ .[] | select(.message != "") | .message ] | (.[0] // "")) | split("\n")[0] | clip),
         detail: (([ .[] | select(.message != "") | .message ] | (.[0] // ""))
                  | split("\n") | .[1:]
                  | map(select(test("^[[:space:]]*$") | not))
-                 | (.[0] // "")),
+                 | (.[0] // "") | clip),
         actor: ([ .[] | select(.actor != "") | .actor ] | (.[0] // "")),
         state: ([ .[] | .state ] | rollup),
         startedAt: ([ .[] | .started ] | min | floor),
         finishedAt: ([ .[] | .finished ] | max | floor),
-        runs: ([ .[] | { id, name, state, url,
+        runs: ([ .[] | { id, name, state, url: (.url[0:400]),
                          durationSec: ((if .state == "running" then $now else .finished end) - .started | secs) } ]
                | sort_by(.name))
       })
@@ -460,7 +502,7 @@ cmd_status() {
 
   # Lowercased here so the comparison further down is a plain substring test
   # on two strings that are already in the same case.
-  needle="$(printf '%s' "$needle" | tr '[:upper:]' '[:lower:]')"
+  needle="$(printf '%s' "${needle:0:$MAX_NEEDLE_CHARS}" | tr '[:upper:]' '[:lower:]')"
   builds="$(add_flagged_paths "$repo" "$needle" "$builds")"
   builds="$(add_running_jobs "$repo" "$builds")"
   builds="$(add_avatars "$builds")"
@@ -484,14 +526,17 @@ DEMO_AVATAR_R='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpb
 DEMO_AVATAR_T='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDE0OjM3OjQwKzAwOjAwisxRPwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxNDozNzo0MCswMDowMN3ZcOAAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTQ6Mzc6NDArMDA6MDCshMhcAAAAP1BMVEVHcExcYm1cYm1cYm1cYm1cYm1cYm2or7pcYm1cYm1cYm2utcBcYm2utcCutcBcYm2utcCRmKNmbHd7go1vdYAheVGSAAAAD3RSTlMAXb4M4gWQ+PckeGkuDSSZ1MweAAABvElEQVRYw7VX25aDIAwsooCXNgT7/9+6vazdWiYQ1tN59WQMyeR2On0NdjGu6wOFvnNmsY3W49TTHv006v9tAiEEo/LDTiRjqlMYKsNU3t5TDf144PcVJwZHOrgB23ekRTccs4cMTfaIwVEbnCL+aWUfPa9JkYsRmHPcwJBip4dcP2t8x4oUVXzA3h4z/D3CVu0xw6uysvpLMQeIwyQ6wICAZReMxgHowm8UQj0CQhSCoAGGBCxpIW9hHhJ4EsKYiyhiCGLKc9DgwT0PCx2IAS2wDtVZeCQSNAK1Dh5tAXUirRJvnQklQV0LzzTAOairxqcW8YdVZ08keKDpSJsH0jSs9sQtBvI8KHflVxZaB0KmA3OIwMBaaMACq7EB9iSnQYMedyQ9JmEuvqUxFhM54q78oSNZS0Ec7SkvaJbngv13T7N4NqYoIeHZ+OHCNcq44um8i0LJfs9g4IaSYhkJbihvWog14B3p9QiuErCwMTvVA/4e4fCmygoCLuy6GgceLqBte7gxsIqA8bZ+vxeiDsK9cMOssp8LN8/FV839pXx2zQd+/8S5RDGf64fnIFNozLdYzJ/B8PPlO9f7D2tUuJivqZUNAAAAAElFTkSuQmCC'
 
 demo_avatars() {
-  private_dir "$AVATAR_DIR" || return 1
+  store avatar-dir >/dev/null 2>&1 || return 1
   # Named for the picture rather than for the person, so a cache still
   # holding an earlier pair does not go on serving it.
-  local one="$AVATAR_DIR/demo-person-1.png" two="$AVATAR_DIR/demo-person-2.png"
-  rm -f -- "$AVATAR_DIR/demo-renee-dev.png" "$AVATAR_DIR/demo-tobias.png" 2>/dev/null
-  readable_file "$one" || printf '%s' "$DEMO_AVATAR_R" | base64 -d 2>/dev/null | write_private "$one"
-  readable_file "$two" || printf '%s' "$DEMO_AVATAR_T" | base64 -d 2>/dev/null | write_private "$two"
-  readable_file "$one" && readable_file "$two"
+  local one="avatars/demo-person-1.png" two="avatars/demo-person-2.png"
+  store remove avatars/demo-renee-dev.png >/dev/null 2>&1
+  store remove avatars/demo-tobias.png >/dev/null 2>&1
+  store exists "$one" >/dev/null 2>&1 \
+    || printf '%s' "$DEMO_AVATAR_R" | base64 -d 2>/dev/null | store write-image "$one" 2>/dev/null
+  store exists "$two" >/dev/null 2>&1 \
+    || printf '%s' "$DEMO_AVATAR_T" | base64 -d 2>/dev/null | store write-image "$two" 2>/dev/null
+  store exists "$one" >/dev/null 2>&1 && store exists "$two" >/dev/null 2>&1
 }
 
 demo_builds() {
@@ -504,8 +549,8 @@ demo_builds() {
   local limit="${1:-$DEFAULT_LIMIT}"
   valid_limit "$limit" || limit="$DEFAULT_LIMIT"
   if demo_avatars; then
-    avatar_r="$AVATAR_DIR/demo-person-1.png"
-    avatar_t="$AVATAR_DIR/demo-person-2.png"
+    avatar_r="$(store path avatars/demo-person-1.png 2>/dev/null)"
+    avatar_t="$(store path avatars/demo-person-2.png 2>/dev/null)"
   fi
   jq -cn --arg repo "$repo" --arg branch "$branch" --arg ar "$avatar_r" --arg at "$avatar_t" --argjson limit "$limit" '
     (now | floor) as $now
@@ -546,24 +591,30 @@ demo_builds() {
 
 # ---------------------------------------------------------------- dispatch
 
+# Everything this script prints goes into a StdioCollector on the other side,
+# which has no size of its own, so the last bound is here. The payload is
+# already capped item by item and string by string; this is the backstop that
+# holds even if one of those is ever loosened.
+emit() { head -c "$MAX_OUTPUT_BYTES"; }
+
 case "${1:-status}" in
   status)
     shift
-    if demo_on; then demo_builds "${3:-}"; else cmd_status "${1:-}" "${2:-}" "${3:-}" "${4:-}"; fi
+    if demo_on; then demo_builds "${3:-}" | emit; else cmd_status "${1:-}" "${2:-}" "${3:-}" "${4:-}" | emit; fi
     ;;
   branches)
     shift
     if demo_on; then
       printf '{"ok":true,"demo":true,"repo":"acme/checkout","default":"main","branches":["main","release-2026-02","staging"]}\n'
     else
-      cmd_branches "${1:-}"
+      cmd_branches "${1:-}" | emit
     fi
     ;;
   demo)
-    private_dir "$CACHE_DIR" || die "could not create a private cache directory"
+    store init >/dev/null 2>&1 || die "could not create a private cache directory"
     case "${2:-}" in
-      on)  printf 'on\n' | write_private "$DEMO_FILE" && printf '{"ok":true,"demo":true}\n' ;;
-      off) rm -f -- "$DEMO_FILE"; printf '{"ok":true,"demo":false}\n' ;;
+      on)  printf 'on\n' | store write demo && printf '{"ok":true,"demo":true}\n' ;;
+      off) store remove demo >/dev/null 2>&1; printf '{"ok":true,"demo":false}\n' ;;
       *)   if demo_on; then printf '{"ok":true,"demo":true}\n'; else printf '{"ok":true,"demo":false}\n'; fi ;;
     esac
     ;;

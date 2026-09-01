@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""The plugin's cache, opened once and then addressed by descriptor.
+
+Everything here exists because checking a path and then using that path are
+two different operations on two possibly different objects. `private_dir`
+followed later by `mktemp`, `cat` or `mv` verifies one directory and then
+writes to whatever that name happens to point at by the time the write lands,
+so replacing the directory or a leaf in between defeats the check entirely.
+
+So the directory is opened once, verified through that open descriptor, and
+every read, write and delete afterwards is relative to it with O_NOFOLLOW.
+A symlink planted on any name we touch fails the open rather than redirecting
+it, and the object we checked is the object we use.
+
+Reads are bounded. Writes go to a fresh exclusive temporary name in the same
+directory and are renamed into place, so a reader never sees half a file.
+Images are checked for type and dimensions here, before the panel is told the
+path exists, because the thing that opens it next is the shell's own image
+decoder.
+"""
+
+import os
+import stat
+import struct
+import sys
+
+CACHE_DIR = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+    "omarchy-github-build-monitor",
+)
+
+MAX_READ_BYTES = 4 * 1024 * 1024
+MAX_WRITE_BYTES = 4 * 1024 * 1024
+MAX_IMAGE_BYTES = 512 * 1024
+MAX_IMAGE_PIXELS = 1024
+MAX_NAME = 128
+
+
+def fail(message):
+    sys.stderr.write("store: %s\n" % message)
+    raise SystemExit(1)
+
+
+def safe_name(name):
+    """One path component, and one this script could have written itself."""
+    if not name or len(name) > MAX_NAME:
+        fail("name out of range")
+    if name in (".", "..") or "/" in name or "\0" in name:
+        fail("name is not a single component")
+    for ch in name:
+        if not (ch.isalnum() or ch in "._-"):
+            fail("name has characters we never write")
+    return name
+
+
+def open_dir(path, parent_fd=None, create=True):
+    """A directory we own, at 0700, opened without following a symlink."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if not create:
+            raise
+        os.mkdir(path, 0o700, dir_fd=parent_fd)
+        fd = os.open(path, flags, dir_fd=parent_fd)
+    except OSError as error:
+        fail("cannot open %s: %s" % (path, error.strerror))
+
+    info = os.fstat(fd)
+    if info.st_uid != os.getuid():
+        os.close(fd)
+        fail("%s belongs to someone else" % path)
+    if info.st_mode & 0o077:
+        os.fchmod(fd, 0o700)
+    return fd
+
+
+def sweep(dir_fd):
+    """Anything in here that is not a regular file was not put here by us.
+
+    A planted symlink is what this removes, and it removes it before any
+    later open can meet it. Directories we made ourselves are kept.
+    """
+    for entry in os.listdir(dir_fd):
+        try:
+            info = os.stat(entry, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            if info.st_mode & 0o177:
+                try:
+                    os.chmod(entry, 0o600, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    pass
+        elif stat.S_ISDIR(info.st_mode):
+            continue
+        else:
+            try:
+                os.unlink(entry, dir_fd=dir_fd)
+            except OSError:
+                pass
+
+
+def read_file(dir_fd, name, limit=MAX_READ_BYTES):
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            return None
+        if info.st_size > limit:
+            return None
+        return os.read(fd, limit)
+    finally:
+        os.close(fd)
+
+
+def write_file(dir_fd, name, payload):
+    """Exclusive temporary in the same directory, then rename over the name.
+
+    rename replaces the entry rather than what an existing entry points at,
+    so a symlink sitting on the destination cannot redirect the write.
+    """
+    if len(payload) > MAX_WRITE_BYTES:
+        fail("refusing to write %d bytes" % len(payload))
+    tmp = "%s.tmp.%d" % (name, os.getpid())
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        os.unlink(tmp, dir_fd=dir_fd)
+    except OSError:
+        pass
+    fd = os.open(tmp, flags, 0o600, dir_fd=dir_fd)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+
+
+def image_dimensions(data):
+    """Type and size of a PNG, JPEG or WebP, or None if it is none of them.
+
+    Read here rather than left to the shell: the next thing to open this file
+    is Qt's image decoder, and handing it whatever arrived over the network is
+    the part worth avoiding.
+    """
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        if len(data) < 24 or data[12:16] != b"IHDR":
+            return None
+        width, height = struct.unpack(">II", data[16:24])
+        return ("png", width, height)
+
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                return None
+            marker = data[i + 1]
+            length = struct.unpack(">H", data[i + 2:i + 4])[0]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                          0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                height, width = struct.unpack(">HH", data[i + 5:i + 9])
+                return ("jpeg", width, height)
+            i += 2 + length
+        return None
+
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8X" and len(data) >= 30:
+            width = int.from_bytes(data[24:27], "little") + 1
+            height = int.from_bytes(data[27:30], "little") + 1
+            return ("webp", width, height)
+        if chunk == b"VP8 " and len(data) >= 30:
+            width = struct.unpack("<H", data[26:28])[0] & 0x3FFF
+            height = struct.unpack("<H", data[28:30])[0] & 0x3FFF
+            return ("webp", width, height)
+        if chunk == b"VP8L" and len(data) >= 25:
+            bits = int.from_bytes(data[21:25], "little")
+            return ("webp", (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+        return None
+
+    return None
+
+
+def main(argv):
+    if len(argv) < 2:
+        fail("no command")
+    command = argv[1]
+
+    parent = os.path.dirname(CACHE_DIR)
+    os.makedirs(parent, exist_ok=True)
+    root_fd = open_dir(CACHE_DIR)
+    try:
+        sweep(root_fd)
+
+        if command == "init":
+            return 0
+
+        if command == "avatar-dir":
+            fd = open_dir("avatars", parent_fd=root_fd)
+            sweep(fd)
+            os.close(fd)
+            return 0
+
+        if command in ("read", "write", "exists", "remove", "write-image", "path"):
+            if len(argv) < 3:
+                fail("no name")
+            target_fd = root_fd
+            name = argv[2]
+            close_target = False
+            if "/" in name:
+                head, name = name.split("/", 1)
+                safe_name(head)
+                target_fd = open_dir(head, parent_fd=root_fd)
+                sweep(target_fd)
+                close_target = True
+            safe_name(name)
+
+            try:
+                if command == "read":
+                    data = read_file(target_fd, name)
+                    if data is None:
+                        return 1
+                    sys.stdout.buffer.write(data)
+                    return 0
+
+                if command == "exists":
+                    return 0 if read_file(target_fd, name, limit=MAX_IMAGE_BYTES) is not None else 1
+
+                if command == "path":
+                    if read_file(target_fd, name, limit=MAX_IMAGE_BYTES) is None:
+                        return 1
+                    where = CACHE_DIR if target_fd is root_fd else os.path.join(CACHE_DIR, argv[2].split("/", 1)[0])
+                    sys.stdout.write(os.path.join(where, name))
+                    return 0
+
+                if command == "remove":
+                    try:
+                        os.unlink(name, dir_fd=target_fd)
+                    except OSError:
+                        pass
+                    return 0
+
+                payload = sys.stdin.buffer.read(MAX_WRITE_BYTES + 1)
+                if len(payload) > MAX_WRITE_BYTES:
+                    fail("input too large")
+
+                if command == "write-image":
+                    if len(payload) > MAX_IMAGE_BYTES:
+                        fail("image too large")
+                    shape = image_dimensions(payload)
+                    if shape is None:
+                        fail("not a png, jpeg or webp")
+                    _, width, height = shape
+                    if not (0 < width <= MAX_IMAGE_PIXELS and 0 < height <= MAX_IMAGE_PIXELS):
+                        fail("image is %dx%d" % (width, height))
+
+                write_file(target_fd, name, payload)
+                return 0
+            finally:
+                if close_target:
+                    os.close(target_fd)
+
+        fail("unknown command: %s" % command)
+    finally:
+        os.close(root_fd)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
