@@ -454,17 +454,37 @@ cmd_status() {
 
 # ------------------------------------------------------------------- demo
 
+# Two invented faces for the two invented authors, written out of the script
+# itself rather than fetched. A demo that borrowed a real GitHub avatar for a
+# made-up name would be putting somebody's face next to a commit they never
+# wrote, and a demo that shows no face at all hides the thing the row is
+# meant to demonstrate.
+DEMO_AVATAR_R='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDEzOjUyOjI3KzAwOjAw+uthaQAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxMzo1MjoyNyswMDowMK3+QLYAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTM6NTI6MjcrMDA6MDDco/gKAAAAQlBMVEVHcEzCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXr//v/RfZrKaorqwtDXj6jw1N314uj78fXfpbnFXIB8Oi4eAAAAC3RSTlMAWwcgR5DXMfffuablAksAAAGbSURBVFjDzVfbkoMgDC0qinIH+f9fXbD7sO1AgsSHPQ+dzrQJyckhJK/X/8W0MX7sQor94GybblrPbJWfWNncf/bybf3rY+mLg8k2GG6+CQlBbEj0XGLgUB6z7EGbzUX2YRlgr4fLfvu6h0XewTLIX5vJSd7FVzX5bQf8U3/yPj40KQYciMEK1mo5yTFMYxKoiGFt/8dpwMGKaUifQfkQvUbU1KDw9M6omN0oZWAaqxmk4IutzV+jcmAO9RrYcuxZTJNSGqxDVYVX8NIXL+4KA1BjlQKnQjm7UBAtoiVed6BSpsA7azV2o45qBYMrFHjlQSkdxcHe/DlTEJslvLCDNzFlHqw60RvZlnEuokNyACOwtpQTzEFAHGif8mcAc9jbVcgXyZhUKhGwKvCqkDOiNVcOGtEB0s8sRCPr6MjmfRnN2bwLWEfUMWppQjWTCeto7xhsDKHallZKU//TkeZhBzPelUGsj70L5JeJ/DbSX2f6fECeUOgzEnlKo8+J9EmVPivTp3X6vkDfWOg70wNb2wN7I31zfWJ37scP0VB+vPEnu9MAAAAASUVORK5CYII='
+DEMO_AVATAR_T='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDEzOjUyOjI3KzAwOjAw+uthaQAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxMzo1MjoyNyswMDowMK3+QLYAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTM6NTI6MjcrMDA6MDDco/gKAAAANlBMVEVHcExOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6b+/v/h6fBcha24ytyCosGZs8xxlbgTu3DnAAAACnRSTlMAWwfaIEeQMfe5GgcB7wAAAWRJREFUWMPNV8uWwiAMFRBKQ3j9/8+Oo/WcqQMJkC68m25MDDc3r9vte6E35XbjwZvdqU1PWt+VgTOMuo//t/20PnzYsTgU9KF4880DBb8x0Tvg4Kh33GEEfTYtjMEusDfC5bh924OFGdhF/vpMapjFRzbdtAN31h/M46RJv+DAL2awlUsNa9ATEoiFEoPh7VPLgWE0VBNieCMSalId81IfViUkiLVGisbmCyLm5zeF3H+ZIXKAeHzbwf/NQ1OF+RH5M5CArBqbFJTDwdsRpSXXdhB4Co6K2ps5ODikKYCdkxFDwSsNVCUyFLwqkvpBCpXWOBcBpoGeQHCQMQLPwd5lMGOuNWcuC71+Wn6LELFETgcK1qFWO/KpFrTAgR7saHQ/EJCg1ubq/wlrZC+YXQ0ac0E8mcSzUT6d5fuBeEOR70jiLU2+J8o3VfmuLN/W5feC/GKR30wXXG0X3I3yy/WK23kcP7cJcjENnOOiAAAAAElFTkSuQmCC'
+
+demo_avatars() {
+  private_dir "$AVATAR_DIR" || return 1
+  local one="$AVATAR_DIR/demo-renee-dev.png" two="$AVATAR_DIR/demo-tobias.png"
+  readable_file "$one" || printf '%s' "$DEMO_AVATAR_R" | base64 -d 2>/dev/null | write_private "$one"
+  readable_file "$two" || printf '%s' "$DEMO_AVATAR_T" | base64 -d 2>/dev/null | write_private "$two"
+  readable_file "$one" && readable_file "$two"
+}
+
 demo_builds() {
   # The invented project, whatever it was asked about. Echoing the real
   # repository back is how a demo ends up with somebody's actual project name
   # in the panel header of a screenshot.
-  local repo="acme/checkout" branch="main"
-  jq -cn --arg repo "$repo" --arg branch "$branch" '
+  local repo="acme/checkout" branch="main" avatar_r="" avatar_t=""
+  if demo_avatars; then
+    avatar_r="$AVATAR_DIR/demo-renee-dev.png"
+    avatar_t="$AVATAR_DIR/demo-tobias.png"
+  fi
+  jq -cn --arg repo "$repo" --arg branch "$branch" --arg ar "$avatar_r" --arg at "$avatar_t" '
     (now | floor) as $now
     | { ok: true, demo: true, repo: $repo, branch: $branch, fetchedAt: $now,
         builds: [
           { sha: "9f31c0ad4c2e6b1a", message: "Merge pull request #482 from acme/split-checkout-totals", detail: "Split the checkout totals into their own component",
-            actor: "renee-dev", state: "running", startedAt: ($now - 214), finishedAt: $now,
+            actor: "renee-dev", avatar: $ar, state: "running", startedAt: ($now - 214), finishedAt: $now,
             durationSec: 214, flagged: [],
             runs: [ {name: "Lint", state: "success", durationSec: 63, url: "", id: 1},
                     {name: "Tests & Deploy", state: "running", durationSec: 214, url: "", id: 2,
@@ -475,21 +495,21 @@ demo_builds() {
                              {name: "deploy", state: "running", stepCount: 13, stepsDone: 2,
                               currentStep: "Push the image"} ] } ] },
           { sha: "1c77e2b9a0d4f331", message: "Cache the tax table for the duration of a request", detail: "",
-            actor: "renee-dev", state: "success", startedAt: ($now - 3120), finishedAt: ($now - 2489),
+            actor: "renee-dev", avatar: $ar, state: "success", startedAt: ($now - 3120), finishedAt: ($now - 2489),
             durationSec: 631, flagged: ["db/migrate/20260214093012_add_tax_region_to_orders.rb"],
             runs: [ {name: "Lint", state: "success", durationSec: 58, url: ""},
                     {name: "Tests & Deploy", state: "success", durationSec: 631, url: ""} ] },
           { sha: "42a9d6f0e8b17c55", message: "Merge pull request #479 from acme/refund-webhooks", detail: "Handle refund webhooks out of order",
-            actor: "tobias", state: "failure", startedAt: ($now - 9800), finishedAt: ($now - 9412),
+            actor: "tobias", avatar: $at, state: "failure", startedAt: ($now - 9800), finishedAt: ($now - 9412),
             durationSec: 388, flagged: [],
             runs: [ {name: "Lint", state: "success", durationSec: 61, url: ""},
                     {name: "Tests & Deploy", state: "failure", durationSec: 388, url: ""} ] },
           { sha: "77b0154ce93a2d68", message: "Drop the unused shipping_zone_id column", detail: "",
-            actor: "renee-dev", state: "cancelled", startedAt: ($now - 14200), finishedAt: ($now - 13990),
+            actor: "renee-dev", avatar: $ar, state: "cancelled", startedAt: ($now - 14200), finishedAt: ($now - 13990),
             durationSec: 210, flagged: ["db/migrate/20260213144501_drop_shipping_zone_id.rb"],
             runs: [ {name: "Tests & Deploy", state: "cancelled", durationSec: 210, url: ""} ] },
           { sha: "0ae5b3319d7f4c02", message: "Merge pull request #476 from acme/idempotent-charges", detail: "Make charge creation idempotent per order",
-            actor: "tobias", state: "success", startedAt: ($now - 21600), finishedAt: ($now - 20940),
+            actor: "tobias", avatar: $at, state: "success", startedAt: ($now - 21600), finishedAt: ($now - 20940),
             durationSec: 660, flagged: [],
             runs: [ {name: "Lint", state: "success", durationSec: 55, url: ""},
                     {name: "Tests & Deploy", state: "success", durationSec: 660, url: ""} ] }

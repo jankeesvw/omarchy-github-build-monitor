@@ -159,10 +159,29 @@ Panel {
   // nf-fa-cog, U+F013.
   readonly property string iconSettings: "\uF013"
 
-  readonly property color green: "#5FA46B"
+  // Whether the theme is a light one, read off its own background rather
+  // than guessed from its name.
+  readonly property bool lightTheme: {
+    var bg = Color.background
+    return (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5
+  }
+
+  // Green has to stay green on both, and #5FA46B is chosen against a dark
+  // card: on a light one it goes pale and stops reading as a state.
+  readonly property color green: lightTheme ? "#3C7C4E" : "#5FA46B"
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color muted: Qt.darker(foreground, 1.6)
+  // Faded towards the background rather than darkened. Qt.darker on a light
+  // theme makes secondary text darker than the title it sits under, which
+  // inverts the hierarchy exactly where it matters least and looks worst.
+  function fade(c, amount) {
+    var bg = Color.background
+    return Qt.rgba(c.r + (bg.r - c.r) * amount,
+                   c.g + (bg.g - c.g) * amount,
+                   c.b + (bg.b - c.b) * amount, 1)
+  }
+
+  readonly property color muted: fade(foreground, 0.45)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   function stateColor(state) {
@@ -1196,7 +1215,7 @@ Panel {
                 wrapMode: Text.WordWrap
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
-                color: Qt.darker(root.foreground, 2.0)
+                color: root.fade(root.foreground, 0.62)
               }
 
               Row {
@@ -1226,7 +1245,7 @@ Panel {
                   bordered: true
                   focusable: true
                   foreground: root.checkState === "ok" ? Color.accent
-                                                       : Qt.darker(root.foreground, 2.0)
+                                                       : root.fade(root.foreground, 0.55)
                   accent: Color.accent
                   fontFamily: root.fontFamily
                   onClicked: root.saveSettings()
@@ -1603,7 +1622,7 @@ Panel {
           elide: Text.ElideRight
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          color: Qt.darker(root.foreground, 2.0)
+          color: root.fade(root.foreground, 0.62)
         }
       }
     }
