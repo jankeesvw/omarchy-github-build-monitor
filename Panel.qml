@@ -1472,7 +1472,6 @@ Panel {
                 }
 
                 Row {
-                  id: metaLine
                   width: parent.width
                   spacing: Style.space(5)
 
@@ -1613,8 +1612,14 @@ Panel {
         // nothing to read. One dim line covers what the keys do.
         Text {
           width: parent.width
-          visible: root.builds.length > 0 && !root.settingsOpen
-          text: root.rowHasPr(root.cursor)
+          // Also when there is nothing in the list. An icon button hands its
+          // tooltip to a mouse only, so without this line a keyboard has no
+          // way of knowing the settings are one key away, which is exactly
+          // the state an empty panel is in.
+          visible: !root.settingsOpen && (root.configured || root.builds.length > 0)
+          text: root.builds.length === 0
+                ? "s settings  ·  r refreshes  ·  esc closes"
+                : root.rowHasPr(root.cursor)
                 ? "enter opens the " + (root.column === 1 ? "pull request" : "build")
                   + "  ·  \u2190 \u2192 switches  ·  esc closes"
                 : "enter opens  ·  s settings  ·  r refreshes  ·  esc closes"
