@@ -641,6 +641,7 @@ Panel {
 
   Process { id: openProc }
 
+
   function openBuild(build) {
     if (!build || !root.validRepo(root.repo) || !root.validSha(build.sha)) return
     // Built from a sha we matched against a hex pattern and a repository name

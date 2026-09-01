@@ -499,11 +499,15 @@ demo_builds() {
   # repository back is how a demo ends up with somebody's actual project name
   # in the panel header of a screenshot.
   local repo="acme/checkout" branch="main" avatar_r="" avatar_t=""
+  # The demo honours the same count the panel asked for, so a screenshot of
+  # it is a screenshot of the settings somebody actually has.
+  local limit="${1:-$DEFAULT_LIMIT}"
+  valid_limit "$limit" || limit="$DEFAULT_LIMIT"
   if demo_avatars; then
     avatar_r="$AVATAR_DIR/demo-person-1.png"
     avatar_t="$AVATAR_DIR/demo-person-2.png"
   fi
-  jq -cn --arg repo "$repo" --arg branch "$branch" --arg ar "$avatar_r" --arg at "$avatar_t" '
+  jq -cn --arg repo "$repo" --arg branch "$branch" --arg ar "$avatar_r" --arg at "$avatar_t" --argjson limit "$limit" '
     (now | floor) as $now
     | { ok: true, demo: true, repo: $repo, branch: $branch, fetchedAt: $now,
         builds: [
@@ -537,7 +541,7 @@ demo_builds() {
             durationSec: 660, flagged: [],
             runs: [ {name: "Lint", state: "success", durationSec: 55, url: ""},
                     {name: "Tests & Deploy", state: "success", durationSec: 660, url: ""} ] }
-        ] }'
+        ][0:$limit] }'
 }
 
 # ---------------------------------------------------------------- dispatch
@@ -545,7 +549,7 @@ demo_builds() {
 case "${1:-status}" in
   status)
     shift
-    if demo_on; then demo_builds "${1:-}" "${2:-}"; else cmd_status "${1:-}" "${2:-}" "${3:-}" "${4:-}"; fi
+    if demo_on; then demo_builds "${3:-}"; else cmd_status "${1:-}" "${2:-}" "${3:-}" "${4:-}"; fi
     ;;
   branches)
     shift
