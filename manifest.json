@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "jankeesvw.github-build-monitor",
+  "name": "GitHub Build Monitor",
+  "version": "1.0.0",
+  "author": "Jankees",
+  "description": "Whether main is green right now: a mark that spins while a build runs, holds green for a minute after one passes, and stays red until a later build fixes it.",
+  "homepage": "https://github.com/jankeesvw/omarchy-github-build-monitor",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "GitHub Build Monitor",
+    "description": "GitHub Actions on the default branch of one repository, rolled up per commit. The panel lists the last builds with their duration and status, and a click opens one on GitHub.",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "repo": "",
+      "branch": "",
+      "label": "",
+      "showLabel": false,
+      "historyCount": 5,
+      "flagPattern": "migrate,migration",
+      "successHoldSec": 60
+    },
+    "schema": [
+      {
+        "key": "repo",
+        "type": "string",
+        "label": "GitHub project",
+        "description": "Paste the GitHub URL of the project, for example https://github.com/basecamp/omarchy. owner/name works too. Authentication comes from the gh CLI, so private repositories work as long as gh can see them.",
+        "defaultValue": ""
+      },
+      {
+        "key": "branch",
+        "type": "string",
+        "label": "Branch",
+        "description": "Leave empty to follow the repository's default branch, whether that is main or master.",
+        "defaultValue": ""
+      },
+      {
+        "key": "label",
+        "type": "string",
+        "label": "Bar label",
+        "description": "Text next to the mark. Empty uses the repository name without its owner.",
+        "defaultValue": ""
+      },
+      {
+        "key": "showLabel",
+        "type": "boolean",
+        "label": "Show the label",
+        "description": "Off by default: the mark on its own is enough when you track one project. Turn it on when the bar carries more than one.",
+        "defaultValue": false
+      },
+      {
+        "key": "historyCount",
+        "type": "integer",
+        "label": "Builds in the panel",
+        "min": 1,
+        "max": 40,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "flagPattern",
+        "type": "string",
+        "label": "Flag paths containing",
+        "description": "Comma separated. A build whose commit touched a file with one of these in its path gets a mark in the list. Empty turns it off, which also saves an API call per new commit.",
+        "defaultValue": "migrate,migration"
+      },
+      {
+        "key": "successHoldSec",
+        "type": "integer",
+        "label": "Hold green for (seconds)",
+        "description": "How long a passing build stays green in the bar before the mark steps back to neutral. A failed build has no timer and stays red.",
+        "min": 0,
+        "max": 3600,
+        "step": 15,
+        "defaultValue": 60
+      }
+    ]
+  }
+}
