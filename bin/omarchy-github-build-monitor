@@ -35,6 +35,7 @@ STORE="$(dirname -- "$(readlink -f -- "$0")")/github-build-monitor-store"
 # from a setting is bounded before it reaches a buffer, a shell variable or
 # the panel, because none of those have a size of their own.
 MAX_RESPONSE_BYTES=$((4 * 1024 * 1024))   # one API response
+MAX_ERR_BYTES=4096                        # what a failing call may say
 MAX_OUTPUT_BYTES=$((1024 * 1024))         # what this script hands the panel
 MAX_REPO_CHARS=140
 MAX_BRANCH_CHARS=255
@@ -45,6 +46,7 @@ MAX_FILES=400                             # files looked at in one commit
 MAX_TEXT_CHARS=300                        # any single string we pass on
 MAX_PATH_CHARS=400
 MAX_FLAGGED=25                            # flagged paths kept per build
+MAX_AVATARS=12                            # distinct authors carried inline
 
 die() {
   printf '{"ok":false,"error":%s}\n' "$(printf '%s' "$1" | jq -Rs .)"
@@ -150,9 +152,24 @@ fetch_avatar() {
 
   curl -fsSL \
        --proto '=https' --proto-redir '=https' --max-redirs 2 \
-       --max-time 8 --max-filesize 400000 \
+       --max-time 8 --max-filesize 32768 \
        -- "https://github.com/$login.png?size=64" 2>/dev/null \
     | store write-image "avatars/$login.png" 2>/dev/null
+}
+
+# The picture itself, as bytes the store has just looked at, not as a name for
+# the panel to open later. Cached on disk only so the next poll does not fetch
+# it again; nothing outside this script ever opens that file.
+avatar_data() {
+  local login="$1" data
+  valid_login "$login" || return 1
+  data="$(store read-image "avatars/$login.png" 2>/dev/null)" || data=""
+  if [ -z "$data" ]; then
+    fetch_avatar "$login" || return 1
+    data="$(store read-image "avatars/$login.png" 2>/dev/null)" || return 1
+  fi
+  [ -n "$data" ] || return 1
+  printf '%s' "$data"
 }
 
 add_avatars() {
@@ -162,13 +179,12 @@ add_avatars() {
   store avatar-dir >/dev/null 2>&1 || { jq -c 'map(. + {avatar: ""})' <<<"$builds" 2>/dev/null || printf '%s' "$builds"; return 0; }
 
   logins="$(jq -r '.[].actor // empty | select(. != "")' <<<"$builds" 2>/dev/null | sort -u)"
+  local seen=0
   for login in $logins; do
+    [ "$seen" -lt "$MAX_AVATARS" ] || break
     valid_login "$login" || continue
-    fetch_avatar "$login" || continue
-    # The path comes back from the store, which hands one over only for a
-    # regular file it owns that really is an image of a sane size.
-    avatar_path="$(store path "avatars/$login.png" 2>/dev/null)" || continue
-    [ -n "$avatar_path" ] || continue
+    avatar_path="$(avatar_data "$login")" || continue
+    seen=$((seen + 1))
     found="$(jq -c --arg l "$login" --arg p "$avatar_path" '.[$l] = $p' <<<"$found" 2>/dev/null)" \
       || found="$found"
   done
@@ -338,9 +354,13 @@ gh_get() {
   # feels like sending. A response that reaches the cap is refused instead of
   # truncated: half a JSON document is not a smaller answer, it is a
   # different one, and this is a shell variable with no size of its own.
-  GH_OUT="$(gh api -- "$path" 2>"$errfile" | head -c $((MAX_RESPONSE_BYTES + 1)))"
+  # Both streams are capped where they are produced. Truncating stderr after
+  # the fact still lets the other side fill a disk first, so the bound belongs
+  # on the way in, not on the way out.
+  GH_OUT="$(gh api -- "$path" 2> >(head -c "$MAX_ERR_BYTES" > "$errfile") \
+            | head -c $((MAX_RESPONSE_BYTES + 1)))"
   status=${PIPESTATUS[0]}
-  GH_ERR="$(head -c 4096 -- "$errfile")"
+  GH_ERR="$(cat -- "$errfile" 2>/dev/null)"
   rm -f -- "$errfile"
 
   if [ "${#GH_OUT}" -gt "$MAX_RESPONSE_BYTES" ]; then
@@ -525,33 +545,20 @@ cmd_status() {
 DEMO_AVATAR_R='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDE0OjM3OjQwKzAwOjAwisxRPwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxNDozNzo0MCswMDowMN3ZcOAAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTQ6Mzc6NDArMDA6MDCshMhcAAAAQlBMVEVHcExFSlRFSlRFSlRFSlRFSlRFSlRFSlRFSlRFSlSaoq5FSlRFSlSaoq6aoq6aoq5FSlRQVmBla3aAh5N2fYiRmKQKzFVrAAAAD3RSTlMAXeIMBZC793gkaS7JDSRzXDtHAAABxElEQVRYw7VX27KDIAwUFMVLSxT8/189VY+2lg3EcbqvTtaQyyYpip+h7JWpdUONro3qy4vWrdV0hrat/N+qIYRGifwoLfGweQpFaajM2zXloNsbv884URmSwVTYviYpasRQDSTHUN35P/bB0DUYQfzHyc9u9tMoyEULzL3b4SHFqR7i+pncJyZUUckHnO0xw/sRZdYeMxydFfXf6GKAOFjWAQ8IPO+CkjgAXfiPQpOPABOFhqkBDwk8VwuxhM2QYCYmjHEROQymmOIcXPBgyUNPN2JAPexDcRbWRAIhENfBKgtIiaSV+FImlARxL2xpgHNQ1o1bLeIPk8yeiPFAoki7B9w0zGriHgN+HqRV+cjC1YEQ1YG6RaBgL1xAD7vxAsqCT4MEGiuSHJaZi3sawyItc+AT2WJVXq3DqRTDyNQhM9rHuKE9PxfiPASoKIEdjlYiSEATLJ7OvP03Qwn3g5T9mUHBDSVt/8mg8Y7kcsA70vGIkCUIzMZsRA94P8LgTdULCDyzLS+7ssSB1YWhwtt6EBEEvK0v94KTgbkXXuhE9l3i5nkK7J/ps6u78fsNjxRF98gfnhVPITHfYxFzdM/fXO9/h8i9CyqU7bsAAAAASUVORK5CYII='
 DEMO_AVATAR_T='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDE0OjM3OjQwKzAwOjAwisxRPwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxNDozNzo0MCswMDowMN3ZcOAAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTQ6Mzc6NDArMDA6MDCshMhcAAAAP1BMVEVHcExcYm1cYm1cYm1cYm1cYm1cYm2or7pcYm1cYm1cYm2utcBcYm2utcCutcBcYm2utcCRmKNmbHd7go1vdYAheVGSAAAAD3RSTlMAXb4M4gWQ+PckeGkuDSSZ1MweAAABvElEQVRYw7VX25aDIAwsooCXNgT7/9+6vazdWiYQ1tN59WQMyeR2On0NdjGu6wOFvnNmsY3W49TTHv006v9tAiEEo/LDTiRjqlMYKsNU3t5TDf144PcVJwZHOrgB23ekRTccs4cMTfaIwVEbnCL+aWUfPa9JkYsRmHPcwJBip4dcP2t8x4oUVXzA3h4z/D3CVu0xw6uysvpLMQeIwyQ6wICAZReMxgHowm8UQj0CQhSCoAGGBCxpIW9hHhJ4EsKYiyhiCGLKc9DgwT0PCx2IAS2wDtVZeCQSNAK1Dh5tAXUirRJvnQklQV0LzzTAOairxqcW8YdVZ08keKDpSJsH0jSs9sQtBvI8KHflVxZaB0KmA3OIwMBaaMACq7EB9iSnQYMedyQ9JmEuvqUxFhM54q78oSNZS0Ec7SkvaJbngv13T7N4NqYoIeHZ+OHCNcq44um8i0LJfs9g4IaSYhkJbihvWog14B3p9QiuErCwMTvVA/4e4fCmygoCLuy6GgceLqBte7gxsIqA8bZ+vxeiDsK9cMOssp8LN8/FV839pXx2zQd+/8S5RDGf64fnIFNozLdYzJ/B8PPlO9f7D2tUuJivqZUNAAAAAElFTkSuQmCC'
 
-demo_avatars() {
-  store avatar-dir >/dev/null 2>&1 || return 1
-  # Named for the picture rather than for the person, so a cache still
-  # holding an earlier pair does not go on serving it.
-  local one="avatars/demo-person-1.png" two="avatars/demo-person-2.png"
-  store remove avatars/demo-renee-dev.png >/dev/null 2>&1
-  store remove avatars/demo-tobias.png >/dev/null 2>&1
-  store exists "$one" >/dev/null 2>&1 \
-    || printf '%s' "$DEMO_AVATAR_R" | base64 -d 2>/dev/null | store write-image "$one" 2>/dev/null
-  store exists "$two" >/dev/null 2>&1 \
-    || printf '%s' "$DEMO_AVATAR_T" | base64 -d 2>/dev/null | store write-image "$two" 2>/dev/null
-  store exists "$one" >/dev/null 2>&1 && store exists "$two" >/dev/null 2>&1
-}
 
 demo_builds() {
   # The invented project, whatever it was asked about. Echoing the real
   # repository back is how a demo ends up with somebody's actual project name
   # in the panel header of a screenshot.
-  local repo="acme/checkout" branch="main" avatar_r="" avatar_t=""
+  local repo="acme/checkout" branch="main"
   # The demo honours the same count the panel asked for, so a screenshot of
   # it is a screenshot of the settings somebody actually has.
   local limit="${1:-$DEFAULT_LIMIT}"
   valid_limit "$limit" || limit="$DEFAULT_LIMIT"
-  if demo_avatars; then
-    avatar_r="$(store path avatars/demo-person-1.png 2>/dev/null)"
-    avatar_t="$(store path avatars/demo-person-2.png 2>/dev/null)"
-  fi
+  # Straight from the two constants above. The demo writes nothing at all
+  # now, which is one fewer thing a shoot can leave behind.
+  local avatar_r="data:image/png;base64,$DEMO_AVATAR_R"
+  local avatar_t="data:image/png;base64,$DEMO_AVATAR_T"
   jq -cn --arg repo "$repo" --arg branch "$branch" --arg ar "$avatar_r" --arg at "$avatar_t" --argjson limit "$limit" '
     (now | floor) as $now
     | { ok: true, demo: true, repo: $repo, branch: $branch, fetchedAt: $now,

@@ -14,10 +14,16 @@ it, and the object we checked is the object we use.
 
 Reads are bounded. Writes go to a fresh exclusive temporary name in the same
 directory and are renamed into place, so a reader never sees half a file.
-Images are checked for type and dimensions here, before the panel is told the
-path exists, because the thing that opens it next is the shell's own image
-decoder.
+Images never leave here as a path. A path is a name that something else opens
+later, and between the check and that open the name can point somewhere else,
+so validating a descriptor and then handing over its pathname only narrows the
+race. `read-image` checks the bytes it has just read from a verified
+descriptor and returns those exact bytes, base64 encoded, so what the shell's
+image decoder is handed is what was inspected and nothing that lives on disk
+under a name anyone can replace.
 """
+
+import base64
 
 import os
 import stat
@@ -31,7 +37,7 @@ CACHE_DIR = os.path.join(
 
 MAX_READ_BYTES = 4 * 1024 * 1024
 MAX_WRITE_BYTES = 4 * 1024 * 1024
-MAX_IMAGE_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 32 * 1024
 MAX_IMAGE_PIXELS = 1024
 MAX_NAME = 128
 
@@ -212,7 +218,7 @@ def main(argv):
             os.close(fd)
             return 0
 
-        if command in ("read", "write", "exists", "remove", "write-image", "path"):
+        if command in ("read", "write", "exists", "remove", "write-image", "read-image"):
             if len(argv) < 3:
                 fail("no name")
             target_fd = root_fd
@@ -237,11 +243,21 @@ def main(argv):
                 if command == "exists":
                     return 0 if read_file(target_fd, name, limit=MAX_IMAGE_BYTES) is not None else 1
 
-                if command == "path":
-                    if read_file(target_fd, name, limit=MAX_IMAGE_BYTES) is None:
+                if command == "read-image":
+                    # Read once, judge those bytes, return those bytes. No
+                    # name is handed on, so there is nothing left to swap
+                    # between the check and the decode.
+                    data = read_file(target_fd, name, limit=MAX_IMAGE_BYTES)
+                    if data is None:
                         return 1
-                    where = CACHE_DIR if target_fd is root_fd else os.path.join(CACHE_DIR, argv[2].split("/", 1)[0])
-                    sys.stdout.write(os.path.join(where, name))
+                    shape = image_dimensions(data)
+                    if shape is None:
+                        return 1
+                    kind, width, height = shape
+                    if not (0 < width <= MAX_IMAGE_PIXELS and 0 < height <= MAX_IMAGE_PIXELS):
+                        return 1
+                    sys.stdout.write("data:image/%s;base64,%s"
+                                     % (kind, base64.b64encode(data).decode("ascii")))
                     return 0
 
                 if command == "remove":

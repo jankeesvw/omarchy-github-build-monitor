@@ -1476,15 +1476,23 @@ Panel {
                   width: parent.width
                   spacing: Style.space(5)
 
-                  // Who pushed it. A local file the fetch script downloaded
-                  // into its own cache: nothing in this panel ever loads a
-                  // picture over the network, because an Image with a remote
-                  // source is the shell process opening a connection to a
-                  // host named in data it was handed.
+                  // Who pushed it. The picture arrives inline, as bytes the
+                  // fetch script has already checked the type and size of,
+                  // rather than as a path this would open for itself. A path
+                  // is a name somebody else can point somewhere else between
+                  // the check and the open, and the thing doing the opening
+                  // here is Qt's image decoder. Nothing in this panel loads a
+                  // picture over the network either, for the same reason in
+                  // its louder form.
                   ClippingRectangle {
                     id: avatarSlot
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: String(row.modelData.avatar || "") !== ""
+                    // Only an inline image, never a URL and never a path.
+                    readonly property string avatarData: {
+                      var value = String(row.modelData.avatar || "")
+                      return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : ""
+                    }
+                    visible: avatarSlot.avatarData !== ""
                     width: visible ? Style.space(15) : 0
                     height: Style.space(15)
                     radius: width / 2
@@ -1492,7 +1500,7 @@ Panel {
 
                     Image {
                       anchors.fill: parent
-                      source: "file://" + String(row.modelData.avatar || "")
+                      source: avatarSlot.avatarData
                       sourceSize.width: Style.space(30)
                       sourceSize.height: Style.space(30)
                       fillMode: Image.PreserveAspectCrop
