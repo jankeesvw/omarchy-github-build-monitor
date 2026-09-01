@@ -471,17 +471,24 @@ cmd_status() {
 
 # ------------------------------------------------------------------- demo
 
-# Two invented faces for the two invented authors, written out of the script
-# itself rather than fetched. A demo that borrowed a real GitHub avatar for a
-# made-up name would be putting somebody's face next to a commit they never
-# wrote, and a demo that shows no face at all hides the thing the row is
+# Two placeholder faces for the two invented authors, written out of the
+# script itself rather than fetched. A demo that borrowed a real GitHub avatar
+# for a made-up name would be putting somebody's face next to a commit they
+# never wrote, and a demo that shows no face at all hides the thing the row is
 # meant to demonstrate.
-DEMO_AVATAR_R='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDEzOjUyOjI3KzAwOjAw+uthaQAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxMzo1MjoyNyswMDowMK3+QLYAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTM6NTI6MjcrMDA6MDDco/gKAAAAQlBMVEVHcEzCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXrCVXr//v/RfZrKaorqwtDXj6jw1N314uj78fXfpbnFXIB8Oi4eAAAAC3RSTlMAWwcgR5DXMfffuablAksAAAGbSURBVFjDzVfbkoMgDC0qinIH+f9fXbD7sO1AgsSHPQ+dzrQJyckhJK/X/8W0MX7sQor94GybblrPbJWfWNncf/bybf3rY+mLg8k2GG6+CQlBbEj0XGLgUB6z7EGbzUX2YRlgr4fLfvu6h0XewTLIX5vJSd7FVzX5bQf8U3/yPj40KQYciMEK1mo5yTFMYxKoiGFt/8dpwMGKaUifQfkQvUbU1KDw9M6omN0oZWAaqxmk4IutzV+jcmAO9RrYcuxZTJNSGqxDVYVX8NIXL+4KA1BjlQKnQjm7UBAtoiVed6BSpsA7azV2o45qBYMrFHjlQSkdxcHe/DlTEJslvLCDNzFlHqw60RvZlnEuokNyACOwtpQTzEFAHGif8mcAc9jbVcgXyZhUKhGwKvCqkDOiNVcOGtEB0s8sRCPr6MjmfRnN2bwLWEfUMWppQjWTCeto7xhsDKHallZKU//TkeZhBzPelUGsj70L5JeJ/DbSX2f6fECeUOgzEnlKo8+J9EmVPivTp3X6vkDfWOg70wNb2wN7I31zfWJ37scP0VB+vPEnu9MAAAAASUVORK5CYII='
-DEMO_AVATAR_T='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDEzOjUyOjI3KzAwOjAw+uthaQAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxMzo1MjoyNyswMDowMK3+QLYAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTM6NTI6MjcrMDA6MDDco/gKAAAANlBMVEVHcExOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6ZOe6b+/v/h6fBcha24ytyCosGZs8xxlbgTu3DnAAAACnRSTlMAWwfaIEeQMfe5GgcB7wAAAWRJREFUWMPNV8uWwiAMFRBKQ3j9/8+Oo/WcqQMJkC68m25MDDc3r9vte6E35XbjwZvdqU1PWt+VgTOMuo//t/20PnzYsTgU9KF4880DBb8x0Tvg4Kh33GEEfTYtjMEusDfC5bh924OFGdhF/vpMapjFRzbdtAN31h/M46RJv+DAL2awlUsNa9ATEoiFEoPh7VPLgWE0VBNieCMSalId81IfViUkiLVGisbmCyLm5zeF3H+ZIXKAeHzbwf/NQ1OF+RH5M5CArBqbFJTDwdsRpSXXdhB4Co6K2ps5ODikKYCdkxFDwSsNVCUyFLwqkvpBCpXWOBcBpoGeQHCQMQLPwd5lMGOuNWcuC71+Wn6LELFETgcK1qFWO/KpFrTAgR7saHQ/EJCg1ubq/wlrZC+YXQ0ac0E8mcSzUT6d5fuBeEOR70jiLU2+J8o3VfmuLN/W5feC/GKR30wXXG0X3I3yy/WK23kcP7cJcjENnOOiAAAAAElFTkSuQmCC'
+#
+# Both are a silhouette on a cool disc, and neither is anywhere near red or
+# green. A warm placeholder sitting a few pixels from the status dots reads as
+# a failed build rather than as a person.
+DEMO_AVATAR_R='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDE0OjM3OjQwKzAwOjAwisxRPwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxNDozNzo0MCswMDowMN3ZcOAAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTQ6Mzc6NDArMDA6MDCshMhcAAAAQlBMVEVHcExFSlRFSlRFSlRFSlRFSlRFSlRFSlRFSlRFSlSaoq5FSlRFSlSaoq6aoq6aoq5FSlRQVmBla3aAh5N2fYiRmKQKzFVrAAAAD3RSTlMAXeIMBZC793gkaS7JDSRzXDtHAAABxElEQVRYw7VX27KDIAwUFMVLSxT8/189VY+2lg3EcbqvTtaQyyYpip+h7JWpdUONro3qy4vWrdV0hrat/N+qIYRGifwoLfGweQpFaajM2zXloNsbv884URmSwVTYviYpasRQDSTHUN35P/bB0DUYQfzHyc9u9tMoyEULzL3b4SHFqR7i+pncJyZUUckHnO0xw/sRZdYeMxydFfXf6GKAOFjWAQ8IPO+CkjgAXfiPQpOPABOFhqkBDwk8VwuxhM2QYCYmjHEROQymmOIcXPBgyUNPN2JAPexDcRbWRAIhENfBKgtIiaSV+FImlARxL2xpgHNQ1o1bLeIPk8yeiPFAoki7B9w0zGriHgN+HqRV+cjC1YEQ1YG6RaBgL1xAD7vxAsqCT4MEGiuSHJaZi3sawyItc+AT2WJVXq3DqRTDyNQhM9rHuKE9PxfiPASoKIEdjlYiSEATLJ7OvP03Qwn3g5T9mUHBDSVt/8mg8Y7kcsA70vGIkCUIzMZsRA94P8LgTdULCDyzLS+7ssSB1YWhwtt6EBEEvK0v94KTgbkXXuhE9l3i5nkK7J/ps6u78fsNjxRF98gfnhVPITHfYxFzdM/fXO9/h8i9CyqU7bsAAAAASUVORK5CYII='
+DEMO_AVATAR_T='iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA5LTAxVDE0OjM3OjQwKzAwOjAwisxRPwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wMVQxNDozNzo0MCswMDowMN3ZcOAAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDktMDFUMTQ6Mzc6NDArMDA6MDCshMhcAAAAP1BMVEVHcExcYm1cYm1cYm1cYm1cYm1cYm2or7pcYm1cYm1cYm2utcBcYm2utcCutcBcYm2utcCRmKNmbHd7go1vdYAheVGSAAAAD3RSTlMAXb4M4gWQ+PckeGkuDSSZ1MweAAABvElEQVRYw7VX25aDIAwsooCXNgT7/9+6vazdWiYQ1tN59WQMyeR2On0NdjGu6wOFvnNmsY3W49TTHv006v9tAiEEo/LDTiRjqlMYKsNU3t5TDf144PcVJwZHOrgB23ekRTccs4cMTfaIwVEbnCL+aWUfPa9JkYsRmHPcwJBip4dcP2t8x4oUVXzA3h4z/D3CVu0xw6uysvpLMQeIwyQ6wICAZReMxgHowm8UQj0CQhSCoAGGBCxpIW9hHhJ4EsKYiyhiCGLKc9DgwT0PCx2IAS2wDtVZeCQSNAK1Dh5tAXUirRJvnQklQV0LzzTAOairxqcW8YdVZ08keKDpSJsH0jSs9sQtBvI8KHflVxZaB0KmA3OIwMBaaMACq7EB9iSnQYMedyQ9JmEuvqUxFhM54q78oSNZS0Ec7SkvaJbngv13T7N4NqYoIeHZ+OHCNcq44um8i0LJfs9g4IaSYhkJbihvWog14B3p9QiuErCwMTvVA/4e4fCmygoCLuy6GgceLqBte7gxsIqA8bZ+vxeiDsK9cMOssp8LN8/FV839pXx2zQd+/8S5RDGf64fnIFNozLdYzJ/B8PPlO9f7D2tUuJivqZUNAAAAAElFTkSuQmCC'
 
 demo_avatars() {
   private_dir "$AVATAR_DIR" || return 1
-  local one="$AVATAR_DIR/demo-renee-dev.png" two="$AVATAR_DIR/demo-tobias.png"
+  # Named for the picture rather than for the person, so a cache still
+  # holding an earlier pair does not go on serving it.
+  local one="$AVATAR_DIR/demo-person-1.png" two="$AVATAR_DIR/demo-person-2.png"
+  rm -f -- "$AVATAR_DIR/demo-renee-dev.png" "$AVATAR_DIR/demo-tobias.png" 2>/dev/null
   readable_file "$one" || printf '%s' "$DEMO_AVATAR_R" | base64 -d 2>/dev/null | write_private "$one"
   readable_file "$two" || printf '%s' "$DEMO_AVATAR_T" | base64 -d 2>/dev/null | write_private "$two"
   readable_file "$one" && readable_file "$two"
@@ -493,8 +500,8 @@ demo_builds() {
   # in the panel header of a screenshot.
   local repo="acme/checkout" branch="main" avatar_r="" avatar_t=""
   if demo_avatars; then
-    avatar_r="$AVATAR_DIR/demo-renee-dev.png"
-    avatar_t="$AVATAR_DIR/demo-tobias.png"
+    avatar_r="$AVATAR_DIR/demo-person-1.png"
+    avatar_t="$AVATAR_DIR/demo-person-2.png"
   fi
   jq -cn --arg repo "$repo" --arg branch "$branch" --arg ar "$avatar_r" --arg at "$avatar_t" '
     (now | floor) as $now
