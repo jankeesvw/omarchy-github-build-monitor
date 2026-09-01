@@ -1409,7 +1409,7 @@ Panel {
                   Item {
                     id: migrationMark
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: row.modelData.flagged !== undefined && row.modelData.flagged.length > 0
+                    visible: (row.modelData.flagged || []).length > 0
                     width: visible ? migrationGlyph.implicitWidth : 0
                     height: migrationGlyph.implicitHeight
 
