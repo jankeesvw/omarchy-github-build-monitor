@@ -14,7 +14,9 @@ It follows the theme, including the light ones:
 
 ## What counts as a build
 
-A commit, not a workflow run. One push to main starts several workflows and they finish minutes apart, so following any single one of them means saying green while the deploy is still going. Every push-triggered run is grouped by its commit and rolled up: running if anything is still going, red if anything failed, and the duration is the wall clock from the first run starting to the last one ending, which is the wait an actual person sits through.
+A commit, not a workflow run. One push to main starts several workflows and they finish minutes apart, so following any single one of them means saying green while the deploy is still going. Every run of that commit is grouped by its commit and rolled up: running if anything is still going, red if anything failed, and the duration is the wall clock from the first run starting to the last one ending, which is the wait an actual person sits through.
+
+Runs started by a push count, and so do runs started by a dispatch. That second one matters more than it sounds: when CI merges a pull request itself, the push carries the Actions token, GitHub's anti-loop rule suppresses the push event, and the build of that commit arrives as a dispatch instead. Read only the pushes and every build an auto-merge produces is missing from the panel.
 
 Scheduled jobs and workflows triggered by a comment are left out. They attach to the head of the branch too, and counting them would turn a green main red because a nightly cron failed.
 

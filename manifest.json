@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jankeesvw.github-build-monitor",
   "name": "GitHub Build Monitor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Jankees",
   "description": "Whether main is green right now: a mark that spins while a build runs, holds green for a minute after one passes, and stays red until a later build fixes it.",
   "homepage": "https://github.com/jankeesvw/omarchy-github-build-monitor",

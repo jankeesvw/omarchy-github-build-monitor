@@ -510,12 +510,26 @@ cmd_status() {
     [ -n "$branch" ] || die "could not find the default branch of $repo"
   fi
 
-  # event=push only. A scheduled job and a comment-triggered workflow both
-  # attach to the head of the branch, and counting those as builds of that
-  # commit turns a green main red because a nightly cron failed.
+  # Pushes and dispatches, nothing else. A scheduled job and a comment-triggered
+  # workflow both attach to the head of the branch, and counting those as builds
+  # of that commit turns a green main red because a nightly cron failed. A
+  # dispatch is not one of those: when CI merges a pull request itself the push
+  # carries GITHUB_TOKEN, GitHub's anti-loop rule then suppresses the push event,
+  # and the build of that commit can only reach us as a dispatch. Reading pushes
+  # alone hides every build an auto-merge produces.
   gh_get "repos/$repo/actions/runs?branch=$branch&event=push&per_page=60&exclude_pull_requests=true" \
     || die "$(fail_reason)"
   runs="$GH_OUT"
+  gh_get "repos/$repo/actions/runs?branch=$branch&event=workflow_dispatch&per_page=60&exclude_pull_requests=true" \
+    || die "$(fail_reason)"
+  # Newest first across both answers. The reader below keeps the first MAX_RUNS
+  # it is handed, and two lists laid end to end would spend that whole budget on
+  # the pushes before reaching a single dispatch.
+  runs="$(printf '%s\n%s' "$runs" "$GH_OUT" | jq -cs '
+    {workflow_runs: ([ .[].workflow_runs[]? ]
+                     | sort_by(.run_started_at // .created_at // "")
+                     | reverse)}')" \
+    || die "could not read the runs of $repo"
 
   builds="$(printf '%s' "$runs" | runs_to_builds "$limit" 2>/dev/null)"
   [ -n "$builds" ] || die "could not read the runs of $repo"
