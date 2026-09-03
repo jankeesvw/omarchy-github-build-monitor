@@ -40,6 +40,7 @@ MAX_OUTPUT_BYTES=$((1024 * 1024))         # what this script hands the panel
 MAX_REPO_CHARS=140
 MAX_BRANCH_CHARS=255
 MAX_NEEDLE_CHARS=200
+MAX_NOTIFY_CHARS=160
 MAX_RUNS=60                               # runs read out of one response
 MAX_JOBS=40                               # jobs read out of one run
 MAX_FILES=400                             # files looked at in one commit
@@ -110,6 +111,7 @@ valid_branch() {
   [ "${#1}" -le "$MAX_BRANCH_CHARS" ] && [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
 }
 valid_limit() { [[ "$1" =~ ^[0-9]{1,2}$ ]] && [ "$1" != "0" ]; }
+valid_sha() { [[ "$1" =~ ^[0-9a-f]{7,64}$ ]]; }
 
 store() { "$STORE" "$@"; }
 demo_on() { store exists demo >/dev/null 2>&1; }
@@ -545,6 +547,43 @@ cmd_status() {
     '{ok: true, repo: $repo, branch: $branch, fetchedAt: (now|floor), builds: $builds}'
 }
 
+# --------------------------------------------------------------- notifying
+
+# One desktop notification per finished commit, however many bars are drawing
+# the widget. The panel cannot decide this for itself: a bar is drawn per
+# monitor, so on a two screen desk there are two of this widget, each with its
+# own idea of what it has already announced. The claim below is the only place
+# they meet.
+cmd_notify() {
+  local sha="${1:-}" state="${2:-}" repo="${3:-}" message="${4:-}" headline urgency
+
+  valid_sha "$sha" || die "not a commit sha"
+  case "$state" in success|failure|cancelled) ;; *) die "not a finished state" ;; esac
+  repo="$(normalize_repo "$repo")"
+  valid_repo "$repo" || die "not a GitHub project"
+
+  # Second and later callers stop here, quietly: a claim that was already taken
+  # is the normal case on more than one monitor, not a failure.
+  store claim "notified/$sha" >/dev/null 2>&1 || return 0
+
+  case "$state" in
+    success)   headline="Build passed"; urgency="normal" ;;
+    cancelled) headline="Build cancelled"; urgency="low" ;;
+    *)         headline="Build failed"; urgency="critical" ;;
+  esac
+
+  # The commit message is written by whoever pushed. Angle brackets go because
+  # a notification server may read the body as markup, and the length goes
+  # because a notification is a line rather than a commit description.
+  message="$(printf '%s' "${message:0:$MAX_NOTIFY_CHARS}" | tr -d '<>')"
+
+  # Everything after the terminator is a value, so a commit message that opens
+  # with a dash stays a message instead of becoming an option.
+  notify-send -a "GitHub Build Monitor" -u "$urgency" \
+    -- "$headline $repo" "$message" >/dev/null 2>&1 || true
+  printf '{"ok":true}\n'
+}
+
 # ------------------------------------------------------------------- demo
 
 # Two placeholder faces for the two invented authors, written out of the
@@ -622,6 +661,10 @@ case "${1:-status}" in
   status)
     shift
     if demo_on; then demo_builds "${3:-}" | emit; else cmd_status "${1:-}" "${2:-}" "${3:-}" "${4:-}" | emit; fi
+    ;;
+  notify)
+    shift
+    if demo_on; then printf '{"ok":true,"demo":true}\n'; else cmd_notify "${1:-}" "${2:-}" "${3:-}" "${4:-}" | emit; fi
     ;;
   branches)
     shift

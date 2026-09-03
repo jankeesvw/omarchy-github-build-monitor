@@ -53,6 +53,7 @@ Panel {
   readonly property int holdSec: Math.min(3600, Math.max(0, Math.round(Number(root.setting("successHoldSec", 60)) || 0)))
   readonly property string flagPattern: String(root.setting("flagPattern", "migrate,migration") || "").trim()
   readonly property int historyCount: Math.min(40, Math.max(1, Math.round(Number(root.setting("historyCount", 5)) || 5)))
+  readonly property bool notifyOnFinish: root.setting("notifyOnFinish", true) === true
 
   // Whatever the settings say, or the repository name without its owner. A
   // bar is a row of small things and "application" is the half you recognise.
@@ -601,6 +602,8 @@ Panel {
       root.builds = payload.builds || []
       if (root.cursor >= root.builds.length) root.cursor = Math.max(0, root.builds.length - 1)
     }
+
+    root.noteFinished()
   }
 
   // Polled at three speeds. A running build is the only time the mark can
@@ -640,6 +643,42 @@ Panel {
   }
 
   Process { id: openProc }
+
+  Process { id: notifyProc }
+
+
+  // A build that was already finished when the widget first saw it is not
+  // news, and neither is the same one on the next poll. So the desktop is only
+  // told about a commit this widget watched go from running to done, which is
+  // also why a shell restart mid-build stays quiet rather than announcing
+  // something that finished while nobody was looking.
+  property string runningSha: ""
+  property string notifiedSha: ""
+
+  function noteFinished() {
+    var top = root.builds.length > 0 ? root.builds[0] : null
+    if (!top) return
+
+    var sha = String(top.sha || "")
+    var state = String(top.state || "")
+    if (sha === "") return
+    if (state === "running") { root.runningSha = sha; return }
+    if (sha !== root.runningSha || sha === root.notifiedSha) return
+
+    root.runningSha = ""
+    root.notifiedSha = sha
+    if (root.notifyOnFinish && !root.demoMode && state !== "skipped") root.notifyFinished(top, state)
+  }
+
+  // The script sends it rather than this panel, because it is the only side
+  // that can tell whether another bar already did. It also does the checking
+  // of the commit message, which is somebody else's text and gets the same
+  // treatment there as every other value the script hands on.
+  function notifyFinished(build, state) {
+    notifyProc.command = [root.script, "notify", String(build.sha || ""), state,
+                          root.displayRepo, String(build.message || "")]
+    notifyProc.running = true
+  }
 
 
   function openBuild(build) {

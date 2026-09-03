@@ -22,6 +22,14 @@ Scheduled jobs and workflows triggered by a comment are left out. They attach to
 
 While a build is running, its row lists the jobs that are working and the step each one is on, so "still going" has something behind it.
 
+## When a build finishes
+
+A desktop notification, saying whether it passed and what the commit was, so you can push and look away instead of watching the bar. Only builds this widget saw start count: something that was already finished when the widget first looked is not news, and a shell restart in the middle of one stays quiet rather than announcing a build that ended while nobody was looking.
+
+A bar is drawn per monitor, so on a two screen desk the widget runs twice and both copies reach that moment at the same millisecond. They agree on who sends it through a claim in the cache directory, which exactly one of them can take, so you get one notification and not one per screen.
+
+Turn it off under "Notify when a build finishes" in the widget's settings.
+
 ## Requirements
 
 The [`gh` CLI](https://cli.github.com), logged in. Every request goes through it, which means no token is ever stored by this plugin or handed to a process as an argument, and private repositories work exactly as far as your `gh` login can see them.
@@ -74,7 +82,7 @@ One request a minute while nothing is happening, one every ten seconds while a b
 omarchy plugin remove jankeesvw.github-build-monitor
 ```
 
-That leaves one thing behind: `~/.cache/omarchy-github-build-monitor/`. It holds one file per project you watched, each with the commit shas of the last handful of builds and the matching file paths inside them, plus an `avatars/` folder with one small picture per person who pushed to a branch you watched. Both are there so the plugin does not ask GitHub the same unchanging question every minute. Nothing else is stored, no token is ever written, and the directory and everything in it is yours alone at 700 and 600. Delete it with:
+That leaves one thing behind: `~/.cache/omarchy-github-build-monitor/`. It holds one file per project you watched, each with the commit shas of the last handful of builds and the matching file paths inside them, an `avatars/` folder with one small picture per person who pushed to a branch you watched, and a `notified/` folder holding an empty file named after each of the last handful of commits it sent a notification about, which is how two screens avoid sending you the same one twice. The first two are there so the plugin does not ask GitHub the same unchanging question every minute. Nothing else is stored, no token is ever written, and the directory and everything in it is yours alone at 700 and 600. Delete it with:
 
 ```bash
 rm -rf ~/.cache/omarchy-github-build-monitor

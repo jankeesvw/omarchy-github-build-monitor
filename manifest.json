@@ -26,7 +26,8 @@
       "showLabel": false,
       "historyCount": 5,
       "flagPattern": "migrate,migration",
-      "successHoldSec": 60
+      "successHoldSec": 60,
+      "notifyOnFinish": true
     },
     "schema": [
       {
@@ -82,6 +83,13 @@
         "max": 3600,
         "step": 15,
         "defaultValue": 60
+      },
+      {
+        "key": "notifyOnFinish",
+        "type": "boolean",
+        "label": "Notify when a build finishes",
+        "description": "A desktop notification the moment a build this widget watched goes from running to done, so you can look away while it runs. Only builds it saw start count, so a restart does not announce something that finished while nobody was looking.",
+        "defaultValue": true
       }
     ]
   }

@@ -40,6 +40,7 @@ MAX_WRITE_BYTES = 4 * 1024 * 1024
 MAX_IMAGE_BYTES = 32 * 1024
 MAX_IMAGE_PIXELS = 1024
 MAX_NAME = 128
+MAX_CLAIMS = 64
 
 
 def fail(message):
@@ -107,6 +108,30 @@ def sweep(dir_fd):
                 os.unlink(entry, dir_fd=dir_fd)
             except OSError:
                 pass
+
+
+def prune(dir_fd, keep):
+    """Keep the newest `keep` regular files here and drop the rest.
+
+    A claim is one empty file per commit, so this directory would otherwise
+    grow by one for every build the widget ever watched finish.
+    """
+    entries = []
+    for entry in os.listdir(dir_fd):
+        try:
+            info = os.stat(entry, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            entries.append((info.st_mtime, entry))
+    if len(entries) <= keep:
+        return
+    entries.sort(reverse=True)
+    for _, entry in entries[keep:]:
+        try:
+            os.unlink(entry, dir_fd=dir_fd)
+        except OSError:
+            pass
 
 
 def read_file(dir_fd, name, limit=MAX_READ_BYTES):
@@ -218,7 +243,7 @@ def main(argv):
             os.close(fd)
             return 0
 
-        if command in ("read", "write", "exists", "remove", "write-image", "read-image"):
+        if command in ("read", "write", "exists", "remove", "claim", "write-image", "read-image"):
             if len(argv) < 3:
                 fail("no name")
             target_fd = root_fd
@@ -265,6 +290,23 @@ def main(argv):
                         os.unlink(name, dir_fd=target_fd)
                     except OSError:
                         pass
+                    return 0
+
+                if command == "claim":
+                    # Exactly one caller walks away with a 0 for a given name.
+                    # A bar is drawn per monitor, so the same widget runs twice
+                    # on a two screen desk and both reach this at the same
+                    # millisecond; O_EXCL is what makes that a race with a
+                    # winner rather than two of everything.
+                    try:
+                        fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                                     0o600, dir_fd=target_fd)
+                    except FileExistsError:
+                        return 1
+                    except OSError:
+                        return 1
+                    os.close(fd)
+                    prune(target_fd, MAX_CLAIMS)
                     return 0
 
                 payload = sys.stdin.buffer.read(MAX_WRITE_BYTES + 1)
