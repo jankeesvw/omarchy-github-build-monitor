@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Widgets
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Builds: whether the branch you deploy from is green right now.
@@ -163,20 +164,20 @@ Panel {
   // Whether the theme is a light one, read off its own background rather
   // than guessed from its name.
   readonly property bool lightTheme: {
-    var bg = Color.background
+    var bg = Commons.Color.background
     return (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5
   }
 
   // Green has to stay green on both, and #5FA46B is chosen against a dark
   // card: on a light one it goes pale and stops reading as a state.
   readonly property color green: lightTheme ? "#3C7C4E" : "#5FA46B"
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
   // Faded towards the background rather than darkened. Qt.darker on a light
   // theme makes secondary text darker than the title it sits under, which
   // inverts the hierarchy exactly where it matters least and looks worst.
   function fade(c, amount) {
-    var bg = Color.background
+    var bg = Commons.Color.background
     return Qt.rgba(c.r + (bg.r - c.r) * amount,
                    c.g + (bg.g - c.g) * amount,
                    c.b + (bg.b - c.b) * amount, 1)
@@ -885,7 +886,7 @@ Panel {
               // mark it sits on, so the corner it covers still reads as a
               // corner and not as two shapes fused together.
               border.width: Math.max(1, Math.round(parent.width * 0.10))
-              border.color: Color.bar.background
+              border.color: Commons.Color.bar.background
             }
 
             StatusMark {
@@ -907,7 +908,7 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             renderType: Text.NativeRendering
-            color: root.opened ? Color.accent : root.foreground
+            color: root.opened ? Commons.Color.accent : root.foreground
           }
         }
       }
@@ -1016,7 +1017,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             iconText: root.iconSettings
             tooltipText: root.settingsOpen ? "Back to the builds" : "Settings"
-            foreground: root.settingsOpen ? Color.accent : root.foreground
+            foreground: root.settingsOpen ? Commons.Color.accent : root.foreground
             fontFamily: root.fontFamily
             focusable: true
             onClicked: root.flipTo(!root.settingsOpen)
@@ -1284,9 +1285,9 @@ Panel {
                   text: "Save"
                   bordered: true
                   focusable: true
-                  foreground: root.checkState === "ok" ? Color.accent
+                  foreground: root.checkState === "ok" ? Commons.Color.accent
                                                        : root.fade(root.foreground, 0.55)
-                  accent: Color.accent
+                  accent: Commons.Color.accent
                   fontFamily: root.fontFamily
                   onClicked: root.saveSettings()
                 }
@@ -1461,7 +1462,7 @@ Panel {
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                       renderType: Text.NativeRendering
-                      color: Color.accent
+                      color: Commons.Color.accent
                     }
 
                     // A glyph this small says "something about the database"
@@ -1564,7 +1565,7 @@ Panel {
                     readonly property bool onCursor: root.cursor === row.index && root.column === 1
                     font.underline: prMouse.containsMouse || onCursor
                     font.bold: onCursor
-                    color: Color.accent
+                    color: Commons.Color.accent
 
                     MouseArea {
                       id: prMouse
