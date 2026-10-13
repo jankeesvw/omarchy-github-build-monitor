@@ -826,90 +826,92 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     slotSize: root.barSlot
-    opticalSize: root.barContentWidth
     opacity: root.configured ? 1 : 0.55
     tooltipText: root.plain(root.tooltipText())
 
-    iconComponent: Component {
-      Item {
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(5)
+    // Not an iconComponent: the shell scales that down to icon size, which
+    // would shrink the status dot next to the icon to a smudge.
+    hasVisualContent: true
+
+    Item {
+      anchors.fill: parent
+      Row {
+        anchors.centerIn: parent
+        spacing: Style.space(5)
+
+        // The mark steps aside for the spinner while a build runs, rather
+        // than trying to hold both in thirteen pixels. A logo that spins
+        // reads as a loading screen, and a ring drawn around a logo at this
+        // size is two shapes fighting over the same four pixels. Swapping
+        // them also means the moment a build starts is visible from the
+        // corner of your eye, which is the only moment this widget has to
+        // announce anything.
+        Item {
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.round(Style.bar.iconFont * 0.88)
+          height: width
 
           // The mark steps aside for the spinner while a build runs, rather
           // than trying to hold both in thirteen pixels. A logo that spins
-          // reads as a loading screen, and a ring drawn around a logo at this
-          // size is two shapes fighting over the same four pixels. Swapping
-          // them also means the moment a build starts is visible from the
-          // corner of your eye, which is the only moment this widget has to
-          // announce anything.
-          Item {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Math.round(Style.bar.iconFont * 0.88)
+          // reads as a loading screen, and a ring drawn around a logo at
+          // this size is two shapes fighting over the same four pixels.
+          // Swapping them also means the moment a build starts is visible
+          // from the corner of your eye, which is the only moment this
+          // widget has to announce anything.
+          GithubMark {
+            id: barMark
+            anchors.fill: parent
+            visible: root.barState !== "running"
+            markColor: root.markColor
+          }
+
+          // And when nothing is running, the badge is what is left. The
+          // mark going green is loud and lasts a minute; after that the
+          // dot keeps saying where the branch stands without shouting
+          // about it, which is the difference between news and a fact.
+          Rectangle {
+            visible: root.barState !== "running" && root.badgeColor.a > 0
+            anchors.right: barMark.right
+            anchors.top: barMark.top
+            // Sitting off the corner rather than inside it. A dot tucked
+            // within the silhouette is a few pixels of colour surrounded by
+            // logo, and at bar size that reads as an artefact; hanging over
+            // the edge it reads as a badge. Top right, where an unread count
+            // rides an app icon, because that is the corner an eye already
+            // checks.
+            anchors.rightMargin: -Math.round(parent.width * 0.34)
+            anchors.topMargin: -Math.round(parent.width * 0.18)
+            width: Math.max(Style.space(8), Math.round(parent.width * 0.66))
             height: width
-
-            // The mark steps aside for the spinner while a build runs, rather
-            // than trying to hold both in thirteen pixels. A logo that spins
-            // reads as a loading screen, and a ring drawn around a logo at
-            // this size is two shapes fighting over the same four pixels.
-            // Swapping them also means the moment a build starts is visible
-            // from the corner of your eye, which is the only moment this
-            // widget has to announce anything.
-            GithubMark {
-              id: barMark
-              anchors.fill: parent
-              visible: root.barState !== "running"
-              markColor: root.markColor
-            }
-
-            // And when nothing is running, the badge is what is left. The
-            // mark going green is loud and lasts a minute; after that the
-            // dot keeps saying where the branch stands without shouting
-            // about it, which is the difference between news and a fact.
-            Rectangle {
-              visible: root.barState !== "running" && root.badgeColor.a > 0
-              anchors.right: barMark.right
-              anchors.top: barMark.top
-              // Sitting off the corner rather than inside it. A dot tucked
-              // within the silhouette is a few pixels of colour surrounded by
-              // logo, and at bar size that reads as an artefact; hanging over
-              // the edge it reads as a badge. Top right, where an unread count
-              // rides an app icon, because that is the corner an eye already
-              // checks.
-              anchors.rightMargin: -Math.round(parent.width * 0.34)
-              anchors.topMargin: -Math.round(parent.width * 0.18)
-              width: Math.max(Style.space(8), Math.round(parent.width * 0.66))
-              height: width
-              radius: width / 2
-              color: root.badgeColor
-              // A rim in the bar's own background separates the dot from the
-              // mark it sits on, so the corner it covers still reads as a
-              // corner and not as two shapes fused together.
-              border.width: Math.max(1, Math.round(parent.width * 0.10))
-              border.color: Commons.Color.bar.background
-            }
-
-            StatusMark {
-              anchors.centerIn: parent
-              width: Math.round(parent.width * 0.86)
-              height: width
-              visible: root.barState === "running"
-              markColor: root.green
-              spinning: root.barState === "running"
-              filled: false
-            }
+            radius: width / 2
+            color: root.badgeColor
+            // A rim in the bar's own background separates the dot from the
+            // mark it sits on, so the corner it covers still reads as a
+            // corner and not as two shapes fused together.
+            border.width: Math.max(1, Math.round(parent.width * 0.10))
+            border.color: Commons.Color.bar.background
           }
 
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            visible: root.showLabel && root.label !== ""
-            text: root.label
-            textFormat: Text.PlainText
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            renderType: Text.NativeRendering
-            color: root.opened ? Commons.Color.accent : root.foreground
+          StatusMark {
+            anchors.centerIn: parent
+            width: Math.round(parent.width * 0.86)
+            height: width
+            visible: root.barState === "running"
+            markColor: root.green
+            spinning: root.barState === "running"
+            filled: false
           }
+        }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.showLabel && root.label !== ""
+          text: root.label
+          textFormat: Text.PlainText
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          renderType: Text.NativeRendering
+          color: root.opened ? Commons.Color.accent : root.foreground
         }
       }
     }
